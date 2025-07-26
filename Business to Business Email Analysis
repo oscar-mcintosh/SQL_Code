@@ -1,0 +1,132 @@
+Email send 9.12.24
+We want to see if the email had an affect on business cardholders spend.
+
+30-days before email send:
+Total population
+Total transactions
+Total spend
+AVG Spend per cardholder
+AVG Transactions per cardholder
+AVG spend per transaction
+Total in-network transactions
+Total out-of-network transactions
+Total in-network spend
+Total out-of-network spend
+AVG in-network purchase per cardholder
+AVG out-of-network purchase per cardholder
+Total # of cardholders considered debit inactive (at least 30 days inactive) 
+
+30-days post email send:
+Total population
+Total transactions
+Total spend
+AVG Spend per cardholder
+AVG Transactions per cardholder
+AVG spend per transaction
+Total in-network transactions
+Total out-of-network transactions
+Total in-network spend
+Total out-of-network spend
+AVG in-network purchase per cardholder
+AVG out-of-network purchase per cardholder
+Total # of cardholders considered debit inactive (at least 30 days inactive) 
+Cardholders considered "activated" during the campaign
+Spend per activation
+Transactions per activation
+# of cardholders who made a purchase with B2B sales
+Total spend from B2B sales
+Spend per each cardholder that made a b2b purchase (include TYSYS)
+
+============================= Code Below =========================================
+
+WITH campaign_dates AS (
+    SELECT 
+        DATE '2024-09-11' AS email_send_date,
+        DATE '2024-09-11' - INTERVAL '30 days' AS pre_period_start,
+        DATE '2024-09-11' + INTERVAL '30 days' AS post_period_end
+)
+
+-- Create temp table: all transactions tied to campaign population
+CREATE OR REPLACE TEMP TABLE CLUB_BUS_TRANS AS
+SELECT 
+    a.TSYS_ACCT_ID,
+    a.MERCH_ZIP,
+    a.TRAN_AMT,
+    a.TRAN_DTE,
+    b.NETWORK,
+    b.CAMPAIGN_CELL
+FROM FACT_CLUB_CC_TRAN a
+JOIN B2B_EMAIL_EDU_CAMPAIGN b 
+  ON a.TSYS_ACCT_ID = b.TSYS_ACCT_ID;
+
+-- Create temp table: activated cardholders during campaign (had no activity in 30 days before email, but activity during 30 days after)
+CREATE OR REPLACE TEMP TABLE ACTIVATED_CHS AS
+SELECT DISTINCT a.TSYS_ACCT_ID
+FROM B2B_EMAIL_EDU_CAMPAIGN a
+JOIN CLUB_BUS_TRANS b 
+  ON a.TSYS_ACCT_ID = b.TSYS_ACCT_ID
+JOIN campaign_dates d ON TRUE
+WHERE b.TRAN_DTE BETWEEN d.email_send_date + INTERVAL '1 day' AND d.post_period_end
+  AND a.TSYS_ACCT_ID NOT IN (
+    SELECT DISTINCT TSYS_ACCT_ID 
+    FROM CLUB_BUS_TRANS 
+    WHERE TRAN_DTE BETWEEN d.pre_period_start AND d.email_send_date
+  );
+
+-- Create temp table: activity during the post-campaign period
+CREATE OR REPLACE TEMP TABLE POST_PERIOD_TRANS AS
+SELECT 
+    a.TSYS_ACCT_ID,
+    a.TRAN_AMT,
+    b.NETWORK
+FROM CLUB_BUS_TRANS a
+JOIN campaign_dates d ON TRUE
+WHERE a.TRAN_DTE BETWEEN d.email_send_date + INTERVAL '1 day' AND d.post_period_end;
+
+-- Create temp table: activity during the pre-campaign period
+CREATE OR REPLACE TEMP TABLE PRE_PERIOD_TRANS AS
+SELECT 
+    a.TSYS_ACCT_ID,
+    a.TRAN_AMT,
+    b.NETWORK
+FROM CLUB_BUS_TRANS a
+JOIN campaign_dates d ON TRUE
+WHERE a.TRAN_DTE BETWEEN d.pre_period_start AND d.email_send_date;
+
+-- Create temp table: total spend by activated customers
+CREATE OR REPLACE TEMP TABLE ACTIVATED_CH_SPEND AS
+SELECT 
+    TSYS_ACCT_ID,
+    SUM(TRAN_AMT) AS TOTAL_SPEND
+FROM POST_PERIOD_TRANS
+WHERE TSYS_ACCT_ID IN (SELECT TSYS_ACCT_ID FROM ACTIVATED_CHS)
+GROUP BY TSYS_ACCT_ID;
+
+-- Create temp table: customers who made purchases in pre but not in post period (i.e., dropped off)
+CREATE OR REPLACE TEMP TABLE DROPOFF_CHS AS
+SELECT DISTINCT TSYS_ACCT_ID
+FROM PRE_PERIOD_TRANS
+WHERE TSYS_ACCT_ID NOT IN (
+    SELECT DISTINCT TSYS_ACCT_ID 
+    FROM POST_PERIOD_TRANS
+);
+
+-- ================================
+-- FINAL OUTPUT
+-- ================================
+SELECT 
+    COUNT(DISTINCT b.TSYS_ACCT_ID) AS TOTAL_POPULATION,
+    COUNT(DISTINCT c.TSYS_ACCT_ID) AS ACTIVATED_DUR_CMPGN,
+    ROUND(SUM(d.TOTAL_SPEND) / COUNT(DISTINCT c.TSYS_ACCT_ID), 2) AS SPEND_PER_ACTVD_ACCT,
+    COUNT(DISTINCT e.TSYS_ACCT_ID) AS DROPOFF,
+    ROUND(SUM(f.TRAN_AMT), 2) AS TOTAL_SPEND,
+    ROUND(SUM(CASE WHEN f.NETWORK = 'IN' THEN f.TRAN_AMT ELSE 0 END), 2) AS IN_NETWORK_SPEND,
+    ROUND(SUM(CASE WHEN f.NETWORK = 'OUT' THEN f.TRAN_AMT ELSE 0 END), 2) AS OUT_NETWORK_SPEND,
+    ROUND(SUM(f.TRAN_AMT) / COUNT(DISTINCT b.TSYS_ACCT_ID), 2) AS AVG_SPEND_PER_CH,
+    ROUND(COUNT(DISTINCT CASE WHEN f.NETWORK = 'IN' THEN f.TSYS_ACCT_ID END) * 1.0 / COUNT(DISTINCT f.TSYS_ACCT_ID), 2) AS SHARE_WHO_USED_IN,
+    ROUND(COUNT(DISTINCT CASE WHEN f.NETWORK = 'OUT' THEN f.TSYS_ACCT_ID END) * 1.0 / COUNT(DISTINCT f.TSYS_ACCT_ID), 2) AS SHARE_WHO_USED_OUT
+FROM B2B_EMAIL_EDU_CAMPAIGN b
+LEFT JOIN ACTIVATED_CHS c ON b.TSYS_ACCT_ID = c.TSYS_ACCT_ID
+LEFT JOIN ACTIVATED_CH_SPEND d ON b.TSYS_ACCT_ID = d.TSYS_ACCT_ID
+LEFT JOIN DROPOFF_CHS e ON b.TSYS_ACCT_ID = e.TSYS_ACCT_ID
+LEFT JOIN POST_PERIOD_TRANS f ON b.TSYS_ACCT_ID = f.TSYS_ACCT_ID;
