@@ -4,6 +4,8 @@
 	
 
 --Population 2: Non-seasonal spenders
+--Customers with a 20,30,40,50,60 % decrease in spend in the months of November and December for 2023/2024
+
 -- this is how I account for months w/ 0 spend
 WITH MONTHS AS (
     SELECT 1 AS mo UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL
@@ -73,18 +75,18 @@ SELECT
 FROM BOTH_YEARS a 
 JOIN EDW_SPOKE..DIM_CLUB_ACCT b
     ON a.CLUB_ACCT_NK_SK = b.CLUB_ACCT_NK_SK
+	 AND a.DATE_OPENED::DATE < DATE '2023-01-01'
+	 AND b.END_DTE IS NULL
+	 AND COALESCE(b.CLOSED_RSN_CD, '') = ''		-- Exclude closed accounts
+     AND COALESCE(b.CHRG_OFF_RSN_CD, '') = ''	-- Exclude charged-off accounts
+     AND COALESCE(b.CLUB_MKT_OPT_OUT, '') <> 'Y'	-- Exclude opt-outs
 JOIN EDW_SPOKE..FACT_CLUB_ACCT_SUMM_HIST c
     ON b.CLUB_ACCT_NK_SK = c.CLUB_ACCT_NK_SK	
+	 AND c.END_DTE IS NULL
+     AND COALESCE(c.AUTH_PROHIBIT_RSN_CD, '') <> 'A7'	-- Exclude fraud accounts
+     AND COALESCE(c.PAST_DUE_CD, '') = ''		-- Exclude past-dues	
 JOIN EDW_SPOKE.ADMIN.DIM_CLUB_CUST e 
     ON b.CLUB_ACCT_NK_SK = e.CLUB_ACCT_NK_SK 
 JOIN EDW_HUB_STAGE..CURRENT_COF_CUST_XREF_DTL f
-    ON e.TSYS_CUST_ID = f.CUSTOMER_ID 			
-WHERE b.END_DTE IS NULL
-    AND COALESCE(b.CLOSED_RSN_CD, '') = ''		-- Exclude closed accounts
-    AND COALESCE(b.CHRG_OFF_RSN_CD, '') = ''	-- Exclude charged-off accounts
-    AND COALESCE(b.CLUB_MKT_OPT_OUT, '') <> 'Y'	-- Exclude opt-outs
-    AND c.END_DTE IS NULL
-    AND COALESCE(c.AUTH_PROHIBIT_RSN_CD, '') <> 'A7'	-- Exclude fraud accounts
-    AND COALESCE(c.PAST_DUE_CD, '') = ''		-- Exclude past-dues		
-    AND e.END_DTE IS NULL
-    AND a.DATE_OPENED::DATE < DATE '2023-01-01';
+    ON e.TSYS_CUST_ID = f.CUSTOMER_ID    	
+    AND e.END_DTE IS NULL;
