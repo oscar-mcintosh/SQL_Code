@@ -4,7 +4,6 @@ WITH campaign_dates AS (
         DATE '2024-09-19' AS start_date,   -- Campaign start date
         DATE '2024-10-02' AS end_date      -- Campaign end date
 ),
-
 -- Step 2: Aggregate points earned by each account from the targeted promotion
 promotion_points AS (
     SELECT 
@@ -16,7 +15,6 @@ promotion_points AS (
     WHERE pnt_log_cmnt = 'PROMOTION ID: 4874'     -- Filter only the target promotion
     GROUP BY club_acct_nk_sk, inbound_interaction_key, pnt_log_cmnt
 ),
-
 -- Step 3: Join point data with sales data and store info to derive KPIs
 sales_data AS (
     SELECT 
@@ -31,35 +29,27 @@ sales_data AS (
         d.store_number,                                     -- Store identifier
         d.store_name,                                       -- Store name
         b.club_mdm_persona_member_key                       -- Customer profile key
-    FROM promotion_points a
-    
-    -- Join with sales header to get transaction-level metadata
+    FROM promotion_points a   
     JOIN edw_spoke.nz.fact_bps_sales_header b 
         ON a.inbound_interaction_key = b.inbound_interaction_key
-
     -- Ensure sales fall within the same year as campaign end date
     JOIN campaign_dates cd
         ON EXTRACT(YEAR FROM b.transaction_datetime) = EXTRACT(YEAR FROM cd.end_date)
-
     -- Join with sales detail for item-level revenue and cost
     JOIN edw_spoke.nz.fact_bps_sales_detail c 
         ON b.inbound_interaction_key = c.sh_inbound_interaction_key
-
     -- Join to store dimension for store metadata
     JOIN edw_spoke.nz.dim_store d 
         ON b.store_member_key = d.member_key
-
     -- Left join store brand override if available (current records only)
     LEFT JOIN edw_spoke.nz.lu_store_brand_xref e 
         ON d.store_number = e.store_number AND e.end_dte IS NULL
-
     -- Group by all non-aggregated fields
     GROUP BY 
         saledate, a.club_acct_nk_sk, store_brand, a.pnt_log_cmnt, 
         a.inbound_interaction_key, a.points, d.store_number, 
         d.store_name, b.club_mdm_persona_member_key
 )
-
 -- Step 4: Materialize final result as a temporary table for downstream use
 CREATE TEMP TABLE trans_kpis AS
 SELECT * FROM sales_data;
