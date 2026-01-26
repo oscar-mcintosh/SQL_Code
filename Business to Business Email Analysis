@@ -44,10 +44,9 @@ WITH campaign_dates AS (
         DATE '2024-09-11' AS email_send_date,
         DATE '2024-09-11' - INTERVAL '30 days' AS pre_period_start,
         DATE '2024-09-11' + INTERVAL '30 days' AS post_period_end
-)
-
+),
 -- Create temp table: all transactions tied to campaign population
-CREATE OR REPLACE TEMP TABLE CLUB_BUS_TRANS AS
+CLUB_BUS_TRANS AS(
 SELECT 
     a.TSYS_ACCT_ID,
     a.MERCH_ZIP,
@@ -57,10 +56,10 @@ SELECT
     b.CAMPAIGN_CELL
 FROM FACT_CLUB_CC_TRAN a
 JOIN B2B_EMAIL_EDU_CAMPAIGN b 
-  ON a.TSYS_ACCT_ID = b.TSYS_ACCT_ID;
-
+  ON a.TSYS_ACCT_ID = b.TSYS_ACCT_ID
+),
 -- Create temp table: activated cardholders during campaign (had no activity in 30 days before email, but activity during 30 days after)
-CREATE OR REPLACE TEMP TABLE ACTIVATED_CHS AS
+ACTIVATED_CHS AS (
 SELECT DISTINCT a.TSYS_ACCT_ID
 FROM B2B_EMAIL_EDU_CAMPAIGN a
 JOIN CLUB_BUS_TRANS b 
@@ -71,46 +70,44 @@ WHERE b.TRAN_DTE BETWEEN d.email_send_date + INTERVAL '1 day' AND d.post_period_
     SELECT DISTINCT TSYS_ACCT_ID 
     FROM CLUB_BUS_TRANS 
     WHERE TRAN_DTE BETWEEN d.pre_period_start AND d.email_send_date
-  );
-
+  ),
 -- Create temp table: activity during the post-campaign period
-CREATE OR REPLACE TEMP TABLE POST_PERIOD_TRANS AS
+POST_PERIOD_TRANS AS (
 SELECT 
     a.TSYS_ACCT_ID,
     a.TRAN_AMT,
     b.NETWORK
 FROM CLUB_BUS_TRANS a
 JOIN campaign_dates d ON TRUE
-WHERE a.TRAN_DTE BETWEEN d.email_send_date + INTERVAL '1 day' AND d.post_period_end;
-
+WHERE a.TRAN_DTE BETWEEN d.email_send_date + INTERVAL '1 day' AND d.post_period_end
+),
 -- Create temp table: activity during the pre-campaign period
-CREATE OR REPLACE TEMP TABLE PRE_PERIOD_TRANS AS
+PRE_PERIOD_TRANS AS (
 SELECT 
     a.TSYS_ACCT_ID,
     a.TRAN_AMT,
     b.NETWORK
 FROM CLUB_BUS_TRANS a
 JOIN campaign_dates d ON TRUE
-WHERE a.TRAN_DTE BETWEEN d.pre_period_start AND d.email_send_date;
-
+WHERE a.TRAN_DTE BETWEEN d.pre_period_start AND d.email_send_date
+),
 -- Create temp table: total spend by activated customers
-CREATE OR REPLACE TEMP TABLE ACTIVATED_CH_SPEND AS
+ACTIVATED_CH_SPEND AS (
 SELECT 
     TSYS_ACCT_ID,
     SUM(TRAN_AMT) AS TOTAL_SPEND
 FROM POST_PERIOD_TRANS
 WHERE TSYS_ACCT_ID IN (SELECT TSYS_ACCT_ID FROM ACTIVATED_CHS)
-GROUP BY TSYS_ACCT_ID;
-
+GROUP BY TSYS_ACCT_ID
+),
 -- Create temp table: customers who made purchases in pre but not in post period (i.e., dropped off)
-CREATE OR REPLACE TEMP TABLE DROPOFF_CHS AS
+DROPOFF_CHS AS(
 SELECT DISTINCT TSYS_ACCT_ID
 FROM PRE_PERIOD_TRANS
 WHERE TSYS_ACCT_ID NOT IN (
     SELECT DISTINCT TSYS_ACCT_ID 
     FROM POST_PERIOD_TRANS
-);
-
+)
 -- ================================
 -- FINAL OUTPUT
 -- ================================
